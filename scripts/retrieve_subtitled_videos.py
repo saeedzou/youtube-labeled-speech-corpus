@@ -14,8 +14,8 @@ import librosa
 import numpy as np
 from pathlib import Path
 from jiwer import wer, cer
-from normalizer import TextNormalizer
-from util import make_video_url
+from scripts.normalizer import TextNormalizer
+from scripts.utils import make_video_url
 from nemo.collections.asr.models import ASRModel
 from tqdm import tqdm
 
@@ -303,11 +303,18 @@ def process_video(videoid, query_phrase, lang, model, normalizer, no_english, en
                 if not check_language_ratio(subtitle_text, no_english, english, max_lang_ratio, min_lang_ratio):
                     return entry
 
-                if (entry["subtitle_duration"] > min_duration) and (common_punct > min_punct or other_punct > max(1, min_punct // 5)):
+                if (entry["subtitle_duration"] > min_duration) and (common_punct > min_punct or other_punct > min_punct):
                     print(f"❕ Downloading and processing audio for video {videoid}")
                     print(url)
                     audio_file = download_video(videoid)
                     auto_transcription = transcribe_audio(audio_file, model, normalizer)
+                    
+                    # Save ASR transcript to a text file
+                    os.makedirs('transcripts', exist_ok=True)
+                    transcript_filepath = os.path.join('transcripts', f'{videoid}.txt')
+                    with open(transcript_filepath, 'w', encoding='utf-8') as f:
+                        f.write(auto_transcription)
+                    
                     manual_transcription = extract_subtitle_text(subtitle_filename, normalizer)
                     word_error_rate = wer(manual_transcription, auto_transcription)
                     character_error_rate = cer(manual_transcription, auto_transcription)
@@ -434,14 +441,10 @@ def main():
     parser.add_argument("--min_lang_ratio", type=float, default=0.5, help="Minimum ratio of English characters required when --english is set")
     args = parser.parse_args()
 
-    if args.english and args.min_lang_ratio == 0.5 and '--min_lang_ratio' in sys.argv:
-        pass
-    elif not args.english and '--min_lang_ratio' in sys.argv:
+    if not args.english and '--min_lang_ratio' in sys.argv:
         parser.error("--min_lang_ratio can only be used with --english")
 
-    if args.no_english and args.max_lang_ratio == 0.5 and '--max_lang_ratio' in sys.argv:
-        pass
-    elif not args.no_english and '--max_lang_ratio' in sys.argv:
+    if not args.no_english and '--max_lang_ratio' in sys.argv:
         parser.error("--max_lang_ratio can only be used with --no_english")
 
     model = load_model(args.model)

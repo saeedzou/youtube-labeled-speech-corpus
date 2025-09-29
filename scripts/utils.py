@@ -8,3 +8,7 @@ def make_query_url(query: str, cc: bool=False) -> str:
   if cc:
     return f"https://www.youtube.com/results?search_query={q}&sp=EgYQASgBMAE%253D"
   return f"https://www.youtube.com/results?search_query={q}&sp=EgQQASgB"
+
+# YouTube video URL
+def make_video_url(videoid: str) -> str:
+  return f"https://www.youtube.com/watch?v={videoid}"
