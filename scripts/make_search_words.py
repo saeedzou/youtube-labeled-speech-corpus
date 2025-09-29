@@ -3,7 +3,7 @@ import bz2
 import argparse
 import sys
 import re
-from util import make_dump_url
+from utils import make_dump_url
 from pathlib import Path
 
 def parse_args():

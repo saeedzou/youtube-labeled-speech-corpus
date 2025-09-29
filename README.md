@@ -12,7 +12,7 @@ The first step involves creating a list of search words from the Wikipedia dump 
 To use the script for making search words, run the following command:
 
 ```bash
-python make_search_words.py <language_code> --outdir <output_directory>
+python -m scripts.make_search_words <language_code> --outdir <output_directory>
 ```
 
 Replace `<language_code>` with the desired language code (e.g., `en` for English) and `<output_directory>` with the directory where you want to save the output files.
