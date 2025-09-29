@@ -60,3 +60,73 @@ python -m scripts.retrieve_subtitled_videos \
     --min_duration 10 \
     --min_punct 5
 ```
+
+## Further Tips and Notes
+
+Here are some additional tips and performance considerations to help you make the most of this pipeline.
+
+### Performance Considerations
+
+- **Step 2: Obtaining Video IDs**: This step can be time-consuming, running at approximately 6 iterations per second in a Google Colab session. However, it only needs to be performed once. To speed up the process, you can split the initial word list into multiple smaller files and run the `obtain_video_ids.py` script on each file in parallel.
+
+- **Step 3: Retrieving and Filtering Subtitled Videos**: This is by far the most time-intensive part of the pipeline, with a processing speed of about 1 iteration per second (if no ASR processing is needed). To manage this, consider the following strategies:
+    - **Parallel Processing**: Break the large CSV file of video IDs into several smaller segments.
+    - **Multiple Sessions**: Run the `retrieve_subtitled_videos.py` script on each CSV segment using separate Google Colab sessions, preferably under different Google accounts. This will help distribute the workload and speed up the data collection significantly. Run the following code block at the start of the session to verify `yt-dlp` availability:
+
+    ```python
+    ! pip install -q yt-dlp
+    from google.colab import runtime
+    import yt_dlp
+    def test_yt_dlp():
+        try:
+            ydl_opts = {
+                'quiet': True,
+                'extractaudio': False,
+                'outtmpl': '/tmp/test_video.%(ext)s',
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info_dict = ydl.extract_info('https://www.youtube.com/watch?v=kJQP7kiw5Fk', download=False)
+                return True
+        except Exception as e:
+            print(f"❌ yt-dlp failed: {e}")
+            runtime.unassign()
+    test_yt_dlp()
+    ```
+    - **Iterative Saving & Resuming**: The script is designed to save the output CSV file iteratively. This is a crucial feature that allows you to stop and resume the process without losing your progress. You can simply point the script to the last saved CSV using the `--checkpoint` argument.
+    - **⚠️ A Note on Automation**: YouTube has implemented strong measures to detect and block automated scripts and bots. Running this pipeline from your own server may result in your IP address being banned. Google Colab is currently the most reliable option for running these scripts without getting blocked. If you discover other workarounds, feel free to contribute to this project with a pull request!
+
+### Post-processing and Channel Crawling
+
+Once your output CSV from Step 3 has a sufficient number of rows with `good_sub = True`, you can adopt a more targeted approach to expand your dataset:
+
+1.  **Identify High-Quality Channels**: Filter the CSV file to find the unique `channel_id`s associated with the high-quality videos.
+
+2.  **Manual Verification**: Manually visit these channels on YouTube. Watch a few of their subtitled videos to confirm if the channel consistently provides high-quality manual subtitles.
+
+3.  **Crawl Entire Channels**: If a channel appears to be a reliable source, you can proceed to crawl all of its videos with manual subtitles. To do this, you can modify the pipeline or use a separate script to fetch all video IDs from that specific channel. When doing a full channel crawl, you might want to adjust the `--min_cer` and `--min_wer` thresholds in Step 3 to better suit the specific quality of that channel's subtitles.
+
+### Creating Aligned Datasets for Speech Processing
+
+After you have crawled the audio and text pairs, the next step is to create a properly aligned dataset suitable for speech processing tasks such as Automatic Speech Recognition (ASR) or Text-to-Speech (TTS). For this, we recommend using the **[ctc-segmentation-toolkit](https://github.com/saeedzou/ctc-segmentation-toolkit)**.
+
+This toolkit is particularly effective for handling text from sources like YouTube subtitles, which are often unpunctuated and consist of short, incomplete sentences. The original toolkit relies on punctuation to segment text, which can lead to poorly segmented, abrupt utterances.
+
+To overcome this, the recommended repository integrates the **Segment Any Text (SAT)** model, providing more robust and linguistically coherent text segmentation. To enable this feature, make sure to set `split_using_sat` to `true` in your `recipes/config.yaml` file. This will ensure that the audio is segmented into meaningful utterances, even in the absence of traditional punctuation.
+
+## Acknowledgements
+
+This project relies on several fantastic open-source tools and libraries. We would like to extend our gratitude to the developers and maintainers of:
+
+-   **[JTubeSpeech](https://github.com/sarulab-speech/jtubespeech)** for the original idea and implementation of a similar pipeline.
+-   **[NVIDIA NeMo](https://github.com/NVIDIA/NeMo)** for providing powerful ASR models and a comprehensive toolkit for conversational AI.
+-   **[ParsNorm](https://github.com/saeedzou/parsnorm)** for Farsi text normalization.
+-   **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** for the robust and feature-rich YouTube downloader.
+-   **[jiwer](https://github.com/jitsi/jiwer)** for the simple and effective WER and CER calculation.
+-   **[ctc-segmentation-toolkit](https://github.com/saeedzou/ctc-segmentation-toolkit)** for the invaluable tool for aligning audio and text.
+
+
+## Contributing
+
+Contributions are welcome! If you have any suggestions, bug reports, or feature requests, please open an issue or submit a pull request. We appreciate any effort to improve the pipeline and make it more accessible to the community.
+
+For any questions or discussions, you can reach out to saeedzou2012@gmail.com.
