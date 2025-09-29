@@ -4,7 +4,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
-from script.utils import make_query_url
+from scripts.utils import make_query_url
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
 import csv
