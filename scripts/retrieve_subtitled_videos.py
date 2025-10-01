@@ -8,10 +8,7 @@ import yt_dlp
 import subprocess
 import string
 import re
-import librosa
 from pathlib import Path
-from jiwer import wer, cer
-from scripts.normalizer import TextNormalizer
 from scripts.utils import make_video_url
 from tqdm import tqdm
 
@@ -510,11 +507,14 @@ def main():
         parser.error("--model is required when --use_asr is set.")
 
     model = None
+    normalizer = None
     if args.use_asr:
         from nemo.collections.asr.models import ASRModel
+        import librosa
+        from jiwer import wer, cer
+        from scripts.normalizer import TextNormalizer
         model = load_model(args.model)
-        
-    normalizer = TextNormalizer(lang=args.lang)
+        normalizer = TextNormalizer(lang=args.lang)
     filename = retrieve_subtitle_exists(
         lang=args.lang,
         fn_videoid=args.videoidlist,
