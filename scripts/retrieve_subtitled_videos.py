@@ -3,20 +3,16 @@ import csv
 import argparse
 import sys
 import re
-import random
 import os
 import yt_dlp
-import torch
 import subprocess
 import string
 import re
 import librosa
-import numpy as np
 from pathlib import Path
 from jiwer import wer, cer
 from scripts.normalizer import TextNormalizer
 from scripts.utils import make_video_url
-from nemo.collections.asr.models import ASRModel
 from tqdm import tqdm
 
 def load_audio(file_path):
@@ -86,56 +82,77 @@ def count_other_punctuations(text, lang):
     matches = re.findall(other_punctuation_marks, text)
     return len(matches)
 
-def parse_timestamp(timestamp):
-    """Convert WebVTT timestamp to seconds."""
+def parse_timestamp(timestamp: str) -> float:
+    """Convert WebVTT or SRT timestamp to seconds."""
+    # Normalize separator for milliseconds (replace ',' with '.')
+    timestamp = timestamp.replace(',', '.')
+    
     # Format: HH:MM:SS.mmm
     hours, minutes, seconds = timestamp.split(':')
     seconds, milliseconds = seconds.split('.')
-    total_seconds = (int(hours) * 3600 + 
-                    int(minutes) * 60 + 
-                    int(seconds) + 
-                    int(milliseconds) / 1000)
+    
+    total_seconds = (
+        int(hours) * 3600 +
+        int(minutes) * 60 +
+        int(seconds) +
+        int(milliseconds) / 1000
+    )
     return total_seconds
 
-def calculate_subtitle_duration(subtitle_file):
-    """Calculate total duration covered by subtitles."""
-    total_duration = 0
+
+def calculate_subtitle_duration(subtitle_file: str) -> float:
+    """Calculate total duration covered by subtitles (VTT or SRT)."""
+    total_duration = 0.0
     try:
         with open(subtitle_file, 'r', encoding='utf-8') as f:
-            lines = f.readlines()[3:]
-            for line in lines:
-                if '-->' in line:
-                    # Extract start and end times
-                    start, end = line.strip().split(' --> ')
-                    start_time = parse_timestamp(start)
-                    end_time = parse_timestamp(end)
-                    duration = end_time - start_time
-                    total_duration += duration
+            lines = f.readlines()
+
+        # For VTT, skip header lines
+        if subtitle_file.lower().endswith(".vtt"):
+            lines = lines[3:]
+
+        for line in lines:
+            if '-->' in line:
+                # Extract start and end times
+                start, end = line.strip().split(' --> ')
+                start_time = parse_timestamp(start)
+                end_time = parse_timestamp(end)
+                duration = end_time - start_time
+                total_duration += duration
+
     except Exception as e:
-        print(f"❌Error calculating subtitle duration: {e}")
-        return 0
-    return total_duration
+        print(f"❌ Error calculating subtitle duration in {subtitle_file}: {e}")
+        return 0.0
+
+    return round(total_duration, 2)
 
 def extract_text_from_subtitle(subtitle_file):
-    """Extract plain text from subtitle file, removing timings."""
+    """Extract plain text from subtitle file (VTT or SRT), removing timings and indexes."""
     text = ""
     try:
+        ext = os.path.splitext(subtitle_file)[1].lower()
+
         with open(subtitle_file, 'r', encoding='utf-8') as f:
-            lines = f.readlines()[3:]
-            for line in lines:
-                # Skip timeline patterns and empty lines
-                if not line.strip():
-                    continue
-                if re.match(r'^\d+$', line.strip()):
-                    continue
-                if '-->' in line:
-                    continue
-                # Add non-empty, non-timeline lines to text
-                if line.strip():
-                    text += line.strip() + " "
+            lines = f.readlines()
+
+        # VTT has a header we should skip
+        if ext == ".vtt":
+            lines = lines[3:]
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            if re.match(r'^\d+$', line):  # subtitle index in SRT
+                continue
+            if '-->' in line:  # timestamp line
+                continue
+            text += line + " "
+
     except Exception as e:
-        print(f"❌Error reading subtitle file: {e}")
+        print(f"❌ Error reading subtitle file: {e}")
         return ""
+
     return text.strip()
 
 def extract_subtitle_text(subtitle_file: str, normalizer) -> str:
@@ -145,10 +162,23 @@ def extract_subtitle_text(subtitle_file: str, normalizer) -> str:
     with open(subtitle_file, 'r', encoding='utf-8') as f:
         lines = f.readlines()
 
-    text = " ".join(
-        line.strip() for line in lines[3:]
-        if not line.startswith('WEBVTT') and not line.strip().startswith('0') and line.strip()
-    )
+    text_lines = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        # Skip VTT header
+        if line.startswith("WEBVTT"):
+            continue
+        # Skip SRT indexes (lines that are only numbers)
+        if re.match(r'^\d+$', line):
+            continue
+        # Skip timestamp lines
+        if '-->' in line:
+            continue
+        text_lines.append(line)
+
+    text = " ".join(text_lines)
 
     # Remove text between parentheses
     text = re.sub(r'\([^)]*\)', '', text)
@@ -168,7 +198,7 @@ def extract_subtitle_text(subtitle_file: str, normalizer) -> str:
     # Normalize text (assuming normalizer is defined elsewhere)
     text = normalizer.normalize(text)
 
-    return text
+    return text.strip()
 
 def download_video(video_id: str):
     video_url = f"https://www.youtube.com/watch?v={video_id}"
@@ -188,37 +218,56 @@ def download_video(video_id: str):
 
         return audio_file
 
-def download_captions(video_id, lang):
+def download_captions(video_id, lang, use_auto=True):
     video_url = f"https://www.youtube.com/watch?v={video_id}"
     os.makedirs('subtitles', exist_ok=True)
     output_template = f"subtitles/{video_id}.%(ext)s"
+    
+    # yt-dlp language handling
     if lang == 'fa':
-        lang = ['fa', 'fa-IR']
+        lang_list = ['fa', 'fa-IR']
     else:
-        lang = [lang]
+        lang_list = [lang]
 
     ydl_opts = {
         'outtmpl': output_template,
-        'writesubtitles': True,             # Write manual subtitles
-        'writeautomaticsubs': False,        # Explicitly disable auto-generated subtitles
-        'subtitleslangs': lang,    # Only download Persian subtitles
-        'skip_download': True,             # Download the audio
+        'writesubtitles': not use_auto,   # Only download manual captions
+        'writeautomaticsubs': use_auto,   # Only download auto captions
+        'subtitleslangs': lang_list,
+        'skip_download': True,
         'cookies': 'cookies.txt',
         'quiet': True,
-        'list_subs': True,
         'no_warnings': True,
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(video_url, download=True)
 
-        # Look for Persian subtitle file
         subtitle_file = None
-        for i in lang:
-            potential_file = f"subtitles/{video_id}.{i}.vtt"
-            if os.path.exists(potential_file):
-                subtitle_file = potential_file
-                break
+
+        if use_auto:
+            # --- Get AUTO captions ---
+            auto_caps = info.get("automatic_captions", {})
+            if lang in auto_caps:
+                # Prefer .srt format
+                chosen = next((c for c in auto_caps[lang] if c["ext"] == "srt"), auto_caps[lang][0])
+                url = chosen["url"]
+                subtitle_file = f"subtitles/{video_id}.auto.{lang}.{chosen['ext']}"
+                try:
+                    import requests
+                    r = requests.get(url)
+                    r.raise_for_status()
+                    with open(subtitle_file, "wb") as f:
+                        f.write(r.content)
+                except Exception as e:
+                    subtitle_file = None
+        else:
+            # --- Get MANUAL captions ---
+            for i in lang_list:
+                potential_file = f"subtitles/{video_id}.{i}.vtt"
+                if os.path.exists(potential_file):
+                    subtitle_file = potential_file
+                    break
 
         return subtitle_file, info
 
@@ -235,12 +284,13 @@ def check_language_ratio(text, no_english, english, max_lang_ratio, min_lang_rat
         return False
     return True
 
-def process_video(videoid, query_phrase, lang, model, normalizer, no_english, english, max_lang_ratio, min_lang_ratio, min_duration, min_wer, min_cer, min_punct):
+def process_video(videoid, query_phrase, lang, model, normalizer, no_english, english, max_lang_ratio, min_lang_ratio, min_duration, min_wer, min_cer, min_punct, use_auto, use_asr):
     """Process a single video to get metadata, download subtitles, and analyze punctuation."""
     url = make_video_url(videoid)
     entry = {
         "videoid": videoid,
         "videourl": url,
+        "language": "",
         "good_sub": "False",
         "sub": "False",
         "title": "",
@@ -263,9 +313,13 @@ def process_video(videoid, query_phrase, lang, model, normalizer, no_english, en
 
     try:
         # First request: Get subtitle info
-        subtitle_filename, metadata = download_captions(videoid, lang)
-        manu_lang = list(metadata['subtitles'].keys())
-        has_subtitle = lang in manu_lang and len(manu_lang) < 5
+        subtitle_filename, metadata = download_captions(videoid, lang, use_auto=use_auto)
+        if "language" in metadata:
+            entry["language"] = metadata["language"]
+            if metadata["language"] != lang:
+                return entry   # stop further processing
+        manu_lang = list(metadata['automatic_captions'].keys())
+        has_subtitle = lang in manu_lang
         entry["sub"] = str(has_subtitle)
         try:
             entry.update({
@@ -285,7 +339,7 @@ def process_video(videoid, query_phrase, lang, model, normalizer, no_english, en
         except Exception as e:
             print(f"❌ Error updating metadata: {e}") 
 
-        if has_subtitle:
+        if has_subtitle and subtitle_filename:
             print(f"❕ Downloaded subtitle for video {videoid} to {subtitle_filename}")
 
             # Extract text and count punctuations
@@ -304,24 +358,25 @@ def process_video(videoid, query_phrase, lang, model, normalizer, no_english, en
                     return entry
 
                 if (entry["subtitle_duration"] > min_duration) and (common_punct > min_punct or other_punct > min_punct):
-                    print(f"❕ Downloading and processing audio for video {videoid}")
-                    print(url)
-                    audio_file = download_video(videoid)
-                    auto_transcription = transcribe_audio(audio_file, model, normalizer)
-                    
-                    # Save ASR transcript to a text file
-                    os.makedirs('transcripts', exist_ok=True)
-                    transcript_filepath = os.path.join('transcripts', f'{videoid}.txt')
-                    with open(transcript_filepath, 'w', encoding='utf-8') as f:
-                        f.write(auto_transcription)
-                    
-                    manual_transcription = extract_subtitle_text(subtitle_filename, normalizer)
-                    word_error_rate = wer(manual_transcription, auto_transcription)
-                    character_error_rate = cer(manual_transcription, auto_transcription)
-                    entry["wer"] = word_error_rate
-                    entry["cer"] = character_error_rate
-                    if word_error_rate < min_wer and character_error_rate < min_cer:
-                        entry["good_sub"] = str(True)
+                    if use_asr:
+                        print(f"❕ Downloading and processing audio for video {videoid}")
+                        print(url)
+                        audio_file = download_video(videoid)
+                        auto_transcription = transcribe_audio(audio_file, model, normalizer)
+                        
+                        # Save ASR transcript to a text file
+                        os.makedirs('transcripts', exist_ok=True)
+                        transcript_filepath = os.path.join('transcripts', f'{videoid}.txt')
+                        with open(transcript_filepath, 'w', encoding='utf-8') as f:
+                            f.write(auto_transcription)
+                        
+                        manual_transcription = extract_subtitle_text(subtitle_filename, normalizer)
+                        word_error_rate = wer(manual_transcription, auto_transcription)
+                        character_error_rate = cer(manual_transcription, auto_transcription)
+                        entry["wer"] = word_error_rate
+                        entry["cer"] = character_error_rate
+                        if word_error_rate < min_wer and character_error_rate < min_cer:
+                            entry["good_sub"] = str(True)
 
 
     except subprocess.CalledProcessError as e:
@@ -334,7 +389,7 @@ def process_video(videoid, query_phrase, lang, model, normalizer, no_english, en
 
     return entry
 
-def retrieve_subtitle_exists(lang, fn_videoid, model, normalizer, outdir="sub", wait_sec=0.2, fn_checkpoint=None, no_english=False, english=False, max_lang_ratio=0.5, min_lang_ratio=0.5, min_duration=10, min_wer=0.8, min_cer=0.2, min_punct=5):
+def retrieve_subtitle_exists(lang, fn_videoid, model, normalizer, outdir="sub", wait_sec=0.2, fn_checkpoint=None, no_english=False, english=False, max_lang_ratio=0.5, min_lang_ratio=0.5, min_duration=10, min_wer=0.8, min_cer=0.2, min_punct=5, use_auto=True, use_asr=True):
     fn_sub = Path(outdir) / f"{Path(fn_videoid).stem}.csv"
     fn_sub.parent.mkdir(parents=True, exist_ok=True)
 
@@ -354,11 +409,11 @@ def retrieve_subtitle_exists(lang, fn_videoid, model, normalizer, outdir="sub", 
         reader = csv.DictReader(f)
         for row in reader:
             video_ids.append((row["video_id"], row['word']))
-    random.shuffle(video_ids)
 
     # Define fieldnames for CSV
     fieldnames = ["videoid", 
                   "videourl", 
+                  "language",
                   "title", 
                   "good_sub", 
                   "sub",
@@ -398,13 +453,15 @@ def retrieve_subtitle_exists(lang, fn_videoid, model, normalizer, outdir="sub", 
                               min_duration=min_duration,
                               min_wer=min_wer,
                               min_cer=min_cer,
-                              min_punct=min_punct)
+                              min_punct=min_punct,
+                              use_auto=use_auto,
+                              use_asr=use_asr)
         subtitle_exists.append(entry)
 
         if wait_sec > 0.01:
             time.sleep(wait_sec)
 
-        # Write current result every 2 videos
+        # Write current result every 50 videos
         if len(subtitle_exists) % 50 == 0:
             with open(fn_sub, "w", newline="", encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -427,8 +484,10 @@ def main():
     )
     parser.add_argument("--lang", type=str, required=True, help="language code (ja, en, ...)")
     parser.add_argument("--videoidlist", type=str, required=True, help="filename of video ID list")
-    parser.add_argument("--model", type=str, required=True, help="Path to local .nemo model or Hugging Face model name")
+    parser.add_argument("--model", type=str, default=None, help="Path to local .nemo model or Hugging Face model name")
     parser.add_argument("--outdir", type=str, default="output", help="dirname to save results")
+    parser.add_argument("--use_auto", action='store_true', default=False, help="Whether to download automatic subtitles (default: False).")
+    parser.add_argument("--use_asr", action='store_true', default=False, help="Whether to download video and pass through ASR (default: False).")
     parser.add_argument("--checkpoint", type=str, default=None, help="filename of list checkpoint (for restart retrieving)")
     parser.add_argument("--min_duration", type=float, default=10.0, help="Minimum subtitle duration in seconds.")
     parser.add_argument("--min_wer", type=float, default=0.3, help="Maximum word error rate.")
@@ -447,7 +506,14 @@ def main():
     if not args.no_english and '--max_lang_ratio' in sys.argv:
         parser.error("--max_lang_ratio can only be used with --no_english")
 
-    model = load_model(args.model)
+    if args.use_asr and not args.model:
+        parser.error("--model is required when --use_asr is set.")
+
+    model = None
+    if args.use_asr:
+        from nemo.collections.asr.models import ASRModel
+        model = load_model(args.model)
+        
     normalizer = TextNormalizer(lang=args.lang)
     filename = retrieve_subtitle_exists(
         lang=args.lang,
@@ -463,7 +529,9 @@ def main():
         min_duration=args.min_duration,
         min_wer=args.min_wer,
         min_cer=args.min_cer,
-        min_punct=args.min_punct
+        min_punct=args.min_punct,
+        use_auto=args.use_auto,
+        use_asr=args.use_asr
     )
     print(f"Saved {args.lang.upper()} subtitle info, metadata, and punctuation counts to {filename}.")
 
