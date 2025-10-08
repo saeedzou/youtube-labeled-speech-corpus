@@ -58,6 +58,9 @@ def main():
     else:
         df_out = pd.DataFrame()
         processed_videos = set()
+    output_dir = os.path.dirname(args.output_csv)
+    if output_dir:  # only make dir if a directory path is specified
+        os.makedirs(output_dir, exist_ok=True)
 
     # Load input data
     df_in = pd.read_csv(args.input_csv)
