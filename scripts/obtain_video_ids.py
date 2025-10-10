@@ -35,43 +35,39 @@ def process_word(word):
         return word, []
 
 
+# Instead of one open() for the whole run, do:
 def obtain_video_id(fn_word, outdir, processes):
     fn_videoid = Path(outdir) / f"{Path(fn_word).stem}.csv"
     fn_videoid.parent.mkdir(parents=True, exist_ok=True)
 
-    # Read existing processed words to avoid duplicates
     processed_words = set()
     if fn_videoid.exists():
         with open(fn_videoid, "r", newline="") as f:
             reader = csv.reader(f)
-            next(reader, None)  # skip header
+            next(reader, None)
             for row in reader:
                 processed_words.add(row[0])
 
-    # Read the word list and filter out already processed words
-    words = [word.strip() for word in open(fn_word, "r").readlines()]
+    words = [w.strip() for w in open(fn_word).readlines()]
     words_to_process = [w for w in words if w not in processed_words]
 
     if not words_to_process:
         print("All words already processed!")
         return fn_videoid
 
-    # Open the output CSV file in append mode
-    with open(fn_videoid, "a", newline="") as f:
-        writer = csv.writer(f)
-        # Write header if the file is empty
-        if f.tell() == 0:
-            writer.writerow(["word", "video_id", "video_link"])
-
-        # Process words and write results
-        with Pool(processes) as pool:
-            for word, videoids in tqdm(pool.imap_unordered(process_word, words_to_process), total=len(words_to_process)):
+    with Pool(processes) as pool:
+        for word, videoids in tqdm(pool.imap_unordered(process_word, words_to_process), total=len(words_to_process)):
+            with open(fn_videoid, "a", newline="") as f:
+                writer = csv.writer(f)
+                if f.tell() == 0:
+                    writer.writerow(["word", "video_id", "video_link"])
                 for videoid in videoids:
                     video_link = f"https://www.youtube.com/watch?v={videoid}"
                     writer.writerow([word, videoid, video_link])
-                    f.flush()
-
+                f.flush()
+    
     return fn_videoid
+
 
 
 if __name__ == "__main__":
