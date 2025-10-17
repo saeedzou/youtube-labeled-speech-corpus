@@ -3,6 +3,7 @@ import yt_dlp
 import argparse
 import pandas as pd
 from tqdm import tqdm
+import time
 from multiprocessing import Pool, cpu_count
 
 
@@ -48,7 +49,11 @@ def main():
     parser.add_argument('--output_csv', type=str, required=True, help='Path to the output CSV file to save video information.')
     parser.add_argument('--save_frequency', type=int, default=100, help='How often to save the results to the output CSV.')
     parser.add_argument('--num_workers', type=int, default=cpu_count(), help='Number of worker processes to use.')
+    parser.add_argument('--max_hours', type=float, default=11, help='Maximum number of hours to run before stopping.')
+
     args = parser.parse_args()
+    start_time = time.time()
+    max_seconds = args.max_hours * 3600  # 11 hours by default
 
     # Load existing data if output file exists
     if os.path.exists(args.output_csv):
@@ -72,6 +77,13 @@ def main():
     with Pool(processes=args.num_workers) as pool:
         with tqdm(total=len(videos_to_process), desc="Processing videos") as pbar:
             for info in pool.imap_unordered(get_video_info, videos_to_process):
+                elapsed = time.time() - start_time
+                if elapsed > max_seconds:
+                    print("\n⏰ Time limit reached (11 hours). Saving progress and exiting...")
+                    pool.terminate()
+                    pool.join()
+                    break
+                
                 if info:
                     results.append(info)
 
