@@ -4,6 +4,7 @@ import argparse
 import pandas as pd
 from tqdm import tqdm
 import time
+import random
 from multiprocessing import Pool, cpu_count
 
 
@@ -72,6 +73,8 @@ def main():
     video_ids = df_in['video_id'].unique()
 
     videos_to_process = [vid for vid in video_ids if vid not in processed_videos]
+    # shuffle
+    random.shuffle(videos_to_process)
 
     results = []
     with Pool(processes=args.num_workers) as pool:
