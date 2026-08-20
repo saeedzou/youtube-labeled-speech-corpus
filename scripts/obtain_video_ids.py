@@ -1,4 +1,3 @@
-import time
 import requests
 import argparse
 import re
@@ -12,22 +11,37 @@ import csv
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Obtaining video IDs from search words",
+        description="Obtaining video IDs from YouTube search words",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("wordlist", type=str, help="filename of word list")
+
+    parser.add_argument(
+        "wordlist",
+        type=str,
+        help="Filename of word list"
+    )
+
     parser.add_argument(
         "--outdir",
         type=str,
         default="videoid",
-        help="dirname to save video IDs"
+        help="Directory to save video IDs"
     )
+
     parser.add_argument(
         "--processes",
         type=int,
         default=cpu_count(),
         help="Number of parallel processes to use"
     )
+
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=100,
+        help="Number of completed words to batch before writing to CSV"
+    )
+
     return parser.parse_args(sys.argv[1:])
 
 
@@ -71,14 +85,65 @@ def process_word(word):
         return word, []
 
 
-def obtain_video_id(fn_word, outdir, processes):
+def write_batch(fn_videoid, batch):
+    """
+    Append a batch of processed words to the CSV.
+    """
+    file_exists = fn_videoid.exists()
+    file_empty = not file_exists or fn_videoid.stat().st_size == 0
+
+    with open(
+        fn_videoid,
+        "a",
+        newline="",
+        encoding="utf-8"
+    ) as f:
+
+        writer = csv.writer(f)
+
+        if file_empty:
+            writer.writerow([
+                "word",
+                "video_id",
+                "channel_id",
+                "channel_name",
+                "video_link"
+            ])
+
+        for word, results in batch:
+            for result in results:
+                video_id = result["video_id"]
+
+                video_link = (
+                    f"https://www.youtube.com/watch?v={video_id}"
+                )
+
+                writer.writerow([
+                    word,
+                    video_id,
+                    result["channel_id"],
+                    result["channel_name"],
+                    video_link
+                ])
+
+        f.flush()
+
+
+def obtain_video_id(fn_word, outdir, processes, batch_size):
     fn_videoid = Path(outdir) / f"{Path(fn_word).stem}.csv"
     fn_videoid.parent.mkdir(parents=True, exist_ok=True)
 
+    # Determine which words have already been processed
     processed_words = set()
 
     if fn_videoid.exists():
-        with open(fn_videoid, "r", newline="", encoding="utf-8") as f:
+        with open(
+            fn_videoid,
+            "r",
+            newline="",
+            encoding="utf-8"
+        ) as f:
+
             reader = csv.reader(f)
             next(reader, None)
 
@@ -86,8 +151,13 @@ def obtain_video_id(fn_word, outdir, processes):
                 if row:
                     processed_words.add(row[0])
 
+    # Read word list
     with open(fn_word, encoding="utf-8") as f:
-        words = [w.strip() for w in f.readlines() if w.strip()]
+        words = [
+            w.strip()
+            for w in f.readlines()
+            if w.strip()
+        ]
 
     words_to_process = [
         w for w in words
@@ -98,45 +168,33 @@ def obtain_video_id(fn_word, outdir, processes):
         print("All words already processed!")
         return fn_videoid
 
+    print(f"Total words: {len(words)}")
+    print(f"Already processed: {len(processed_words)}")
+    print(f"Remaining: {len(words_to_process)}")
+    print(f"Processes: {processes}")
+    print(f"Batch size: {batch_size}")
+
+    batch = []
+
     with Pool(processes) as pool:
         for word, results in tqdm(
-            pool.imap_unordered(process_word, words_to_process),
+            pool.imap_unordered(
+                process_word,
+                words_to_process
+            ),
             total=len(words_to_process)
         ):
-            with open(
-                fn_videoid,
-                "a",
-                newline="",
-                encoding="utf-8"
-            ) as f:
+            batch.append((word, results))
 
-                writer = csv.writer(f)
+            # Write once the batch reaches the requested size
+            if len(batch) >= batch_size:
+                write_batch(fn_videoid, batch)
+                batch.clear()
 
-                if f.tell() == 0:
-                    writer.writerow([
-                        "word",
-                        "video_id",
-                        "channel_id",
-                        "channel_name",
-                        "video_link"
-                    ])
-
-                for result in results:
-                    video_id = result["video_id"]
-
-                    video_link = (
-                        f"https://www.youtube.com/watch?v={video_id}"
-                    )
-
-                    writer.writerow([
-                        word,
-                        video_id,
-                        result["channel_id"],
-                        result["channel_name"],
-                        video_link
-                    ])
-
-                f.flush()
+    # Write any remaining results
+    if batch:
+        write_batch(fn_videoid, batch)
+        batch.clear()
 
     return fn_videoid
 
@@ -147,7 +205,8 @@ if __name__ == "__main__":
     filename = obtain_video_id(
         args.wordlist,
         args.outdir,
-        args.processes
+        args.processes,
+        args.batch_size
     )
 
     print(f"Saved video IDs to {filename}.")
