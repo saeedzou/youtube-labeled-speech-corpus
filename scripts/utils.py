@@ -6,8 +6,8 @@ def make_dump_url(lang: str) -> str:
 def make_query_url(query: str, cc: bool=True) -> str:
   q = query.rstrip("\n").strip(" ").replace(" ", "+")
   if cc:
-    return f"https://www.youtube.com/results?search_query={q}&sp=EgQQATAB" # This is for cc videos
-    # return f"https://www.youtube.com/results?search_query={q}&sp=EgYQASgBMAE%253D" # This is for subtitled-cc videos
+    # return f"https://www.youtube.com/results?search_query={q}&sp=EgQQATAB" # This is for cc videos
+    return f"https://www.youtube.com/results?search_query={q}&sp=EgYQASgBMAE%253D" # This is for subtitled-cc videos
   return f"https://www.youtube.com/results?search_query={q}&sp=EgQQASgB" # This is for subtitled videos
 
 # YouTube video URL
