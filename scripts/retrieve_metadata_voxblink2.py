@@ -226,14 +226,14 @@ def process_speaker(speaker_video_ids, stop_event):
 # ----------------------------------------------------------------------------
 # Hugging Face Hub sync (called from the main process only)
 # ----------------------------------------------------------------------------
-def push_output_csv(api, output_csv, repo_id):
+def push_output_csv(api, output_csv, repo_id, processed, remaining):
     try:
         api.upload_file(
             path_or_fileobj=output_csv,
             path_in_repo=os.path.basename(output_csv),
             repo_id=repo_id,
             repo_type='dataset',
-            commit_message=f'Update metadata ({time.strftime("%Y-%m-%d %H:%M:%S")})',
+            commit_message=f'Update metadata: {processed} processed, {remaining} remaining ({time.strftime("%Y-%m-%d %H:%M:%S")})',
         )
         logging.info(f'Pushed {output_csv} to {repo_id}')
     except Exception as exc:
@@ -365,11 +365,14 @@ def main():
         f'out of {df_uploaded["speaker_id"].nunique()} total speakers with availability=uploaded'
     )
 
-    def checkpoint(df):
+    total_speakers = len(speaker_groups)
+
+    def checkpoint(df, processed_speakers):
         df.to_csv(args.output_csv, index=False)
         logging.info(f'Saved {len(df)} results to {args.output_csv}')
         if push_enabled:
-            push_output_csv(api, args.output_csv, args.hf_repo_id)
+            remaining = total_speakers - processed_speakers
+            push_output_csv(api, args.output_csv, args.hf_repo_id, processed_speakers, remaining)
 
     # Persist the 'unavailable' rows right away so progress isn't lost if
     # the run is interrupted before the first checkpoint below.
