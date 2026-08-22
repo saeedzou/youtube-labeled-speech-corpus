@@ -115,7 +115,7 @@ def _looks_like_traceback(msg):
     return stripped.startswith('File "') or stripped.startswith('Traceback')
 
 
-REQUIRED_FIELDS = ['channel_id', 'duration', 'categories', 'language']
+REQUIRED_FIELDS = ['channel_id', 'channel_name', 'categories', 'language']
 
 
 def build_ydl_opts(logger):
