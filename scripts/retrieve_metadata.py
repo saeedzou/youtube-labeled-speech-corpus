@@ -132,8 +132,8 @@ def build_ydl_opts(logger):
         'verbose': True,
         'quiet': True,
         'extractor_args': {
-            'youtube': {'player_client': ['tv', 'android']}
-        },
+                'youtube': {'player_client': ['default', 'tv_downgraded', 'web_embedded']}
+            },
         'logger': logger,
     }
 
