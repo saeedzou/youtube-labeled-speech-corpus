@@ -377,13 +377,14 @@ def main():
     # Persist the 'unavailable' rows right away so progress isn't lost if
     # the run is interrupted before the first checkpoint below.
     if unavailable_rows:
-        checkpoint(df_out)
+        checkpoint(df_out, 0)
 
     manager = mp.Manager()
     stop_event = manager.Event()
     worker_fn = functools.partial(process_speaker, stop_event=stop_event)
 
     results = []
+    processed_speakers = 0
     bot_check_hit = False
     time_limit_hit = False
 
@@ -400,6 +401,7 @@ def main():
 
                 pbar.update(1)
                 results.extend(rows)
+                processed_speakers += 1
 
                 if stop_event.is_set():
                     print("\n❌ Too many bot errors, stopping early to avoid further requests.")
@@ -412,7 +414,7 @@ def main():
                     temp_df = pd.DataFrame(results)
                     df_out = pd.concat([df_out, temp_df], ignore_index=True)
                     df_out = df_out.drop_duplicates(subset='video_id', keep='last')
-                    checkpoint(df_out)
+                    checkpoint(df_out, processed_speakers)
                     results = []
 
     # Save any remaining results
@@ -420,7 +422,7 @@ def main():
         temp_df = pd.DataFrame(results)
         df_out = pd.concat([df_out, temp_df], ignore_index=True)
         df_out = df_out.drop_duplicates(subset='video_id', keep='last')
-        checkpoint(df_out)
+        checkpoint(df_out, processed_speakers)
 
     if bot_check_hit:
         print('*' * 15)
