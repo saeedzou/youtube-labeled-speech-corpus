@@ -204,14 +204,14 @@ def get_video_info(video_id, stop_event):
 # ----------------------------------------------------------------------------
 # Hugging Face Hub sync (called from the main process only)
 # ----------------------------------------------------------------------------
-def push_output_csv(api, output_csv, repo_id):
+def push_output_csv(api, output_csv, repo_id, processed, remaining):
     try:
         api.upload_file(
             path_or_fileobj=output_csv,
             path_in_repo=os.path.basename(output_csv),
             repo_id=repo_id,
             repo_type='dataset',
-            commit_message=f'Update metadata ({time.strftime("%Y-%m-%d %H:%M:%S")})',
+            commit_message=f'Update metadata (processed={processed}, remaining={remaining}, {time.strftime("%Y-%m-%d %H:%M:%S")})',
         )
         logging.info(f'Pushed {output_csv} to {repo_id}')
     except Exception as exc:
@@ -334,11 +334,11 @@ def main():
         f'({len(done_ids)} already downloaded, unavailable, or capped)'
     )
 
-    def checkpoint(df):
+    def checkpoint(df, processed, remaining):
         df.to_csv(args.output_csv, index=False)
         logging.info(f'Saved {len(df)} results to {args.output_csv}')
         if push_enabled:
-            push_output_csv(api, args.output_csv, args.hf_repo_id)
+            push_output_csv(api, args.output_csv, args.hf_repo_id, processed, remaining)
 
     manager = mp.Manager()
     stop_event = manager.Event()
@@ -347,6 +347,8 @@ def main():
     results = []
     bot_check_hit = False
     time_limit_hit = False
+    processed_count = 0
+    total_to_process = len(videos_to_process)
 
     with mp.Pool(processes=args.num_workers) as pool:
         with tqdm(total=len(videos_to_process), desc="Processing videos") as pbar:
@@ -364,6 +366,7 @@ def main():
                 if info.get('status') != 'skipped':
                     info['attempts'] = attempts_so_far.get(info['video_id'], 0) + 1
                     results.append(info)
+                processed_count += 1
 
                 if info.get('error_type') == 'bot_check':
                     print("\n❌ Too many bot errors, stopping early to avoid further requests.")
@@ -376,7 +379,7 @@ def main():
                     temp_df = pd.DataFrame(results)
                     df_out = pd.concat([df_out, temp_df], ignore_index=True)
                     df_out = df_out.drop_duplicates(subset='video_id', keep='last')
-                    checkpoint(df_out)
+                    checkpoint(df_out, processed_count, total_to_process - processed_count)
                     results = []
 
     # Save any remaining results
@@ -384,7 +387,7 @@ def main():
         temp_df = pd.DataFrame(results)
         df_out = pd.concat([df_out, temp_df], ignore_index=True)
         df_out = df_out.drop_duplicates(subset='video_id', keep='last')
-        checkpoint(df_out)
+        checkpoint(df_out, processed_count, total_to_process - processed_count)
 
     if bot_check_hit:
         print('*' * 15)
