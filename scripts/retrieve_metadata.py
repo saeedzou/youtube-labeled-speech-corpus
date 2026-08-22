@@ -96,6 +96,8 @@ class _CapturingLogger:
         pass
 
     def warning(self, msg):
+        if 'n challenge solving failed' in msg or 'Signature solving failed' in msg:
+            return  # irrelevant: we don't use format/stream URLs, metadata-only extraction
         logging.warning(msg)
 
     def error(self, msg):
