@@ -52,11 +52,12 @@ COPYRIGHT_MARKERS = (
 GEO_BLOCKED_MARKERS = (
     'not made this video available in your country',
 )
+AUTH_REQUIRED_MARKERS = ('Please sign in',)
 
 # Videos in these categories will never succeed on retry, so once seen they
 # get marked 'unavailable' here and downloader.py's should_retry_video()
 # (which also treats status == 'unavailable' as terminal) will skip them.
-PERMANENT_ERROR_TYPES = {'age_restricted', 'unavailable', 'copyright', 'geo_blocked'}
+PERMANENT_ERROR_TYPES = {'age_restricted', 'unavailable', 'copyright', 'geo_blocked', 'auth_required'}
 
 
 def classify_error(msg):
@@ -73,6 +74,8 @@ def classify_error(msg):
         return 'geo_blocked'
     if any(marker in msg for marker in UNAVAILABLE_MARKERS):
         return 'unavailable'
+    if any(marker in msg for marker in AUTH_REQUIRED_MARKERS):
+        return 'auth_required'
     return 'other'
 
 
