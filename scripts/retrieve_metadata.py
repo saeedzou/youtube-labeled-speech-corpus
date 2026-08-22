@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import random
+import shutil
 import logging
 import argparse
 import functools
@@ -217,6 +218,30 @@ def push_output_csv(api, output_csv, repo_id):
         logging.warning(f'Could not push {output_csv} to {repo_id}: {exc}')
 
 
+def try_download_from_hf(api, output_csv, repo_id):
+    """Pull the existing progress file from the HF dataset repo, if any,
+    so a fresh machine/container can resume instead of starting over.
+    Without this, output_csv only ever reflects local disk, which is
+    empty on every new machine even though the repo has real progress."""
+    try:
+        from huggingface_hub import hf_hub_download
+        downloaded_path = hf_hub_download(
+            repo_id=repo_id,
+            filename=os.path.basename(output_csv),
+            repo_type='dataset',
+            token=api.token,
+        )
+        output_dir = os.path.dirname(output_csv)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+        shutil.copy(downloaded_path, output_csv)
+        logging.info(f'Downloaded existing progress from {repo_id} to {output_csv}')
+        return True
+    except Exception as exc:
+        logging.info(f'No existing file to resume from on {repo_id} ({exc})')
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(description='Retrieve video information from YouTube.')
     parser.add_argument('--input_csv', type=str, required=True, help='Path to the input CSV file containing video IDs.')
@@ -231,6 +256,35 @@ def main():
     args = parser.parse_args()
     start_time = time.time()
     max_seconds = args.max_hours * 3600  # 11 hours by default
+
+    # ------------------------------------------------------------------
+    # HF Hub setup (moved up so we can pull existing progress *before*
+    # deciding whether output_csv "exists" -- a fresh machine has no
+    # local file but the repo may already hold real progress).
+    # ------------------------------------------------------------------
+    hf_token = os.environ.get('HF_TOKEN')
+    push_enabled = (not args.no_push) and HF_AVAILABLE and bool(hf_token) and bool(args.hf_repo_id)
+    if args.no_push:
+        logging.info('--no_push set: results will only be saved locally.')
+    elif not args.hf_repo_id:
+        logging.info('--hf_repo_id not set: results will only be saved locally.')
+    elif not HF_AVAILABLE:
+        logging.warning('huggingface_hub is not installed; results will only be saved locally. '
+                         'Run `pip install huggingface_hub` to enable pushes.')
+    elif not hf_token:
+        logging.warning('HF_TOKEN not set in the environment; results will only be saved locally.')
+
+    api = HfApi(token=hf_token) if push_enabled else None
+    if push_enabled:
+        try:
+            create_repo(args.hf_repo_id, repo_type='dataset', exist_ok=True, token=hf_token)
+        except Exception as exc:
+            logging.warning(f'create_repo({args.hf_repo_id}) failed (may already exist / no perms): {exc}')
+
+    # Pull existing progress from the hub before checking local disk, so
+    # a fresh machine resumes from the hub's copy instead of starting over.
+    if push_enabled and not os.path.exists(args.output_csv):
+        try_download_from_hf(api, args.output_csv, args.hf_repo_id)
 
     # Load existing data if output file exists
     if os.path.exists(args.output_csv):
@@ -279,25 +333,6 @@ def main():
         f'{len(videos_to_process)}/{len(video_ids)} videos remain retryable '
         f'({len(done_ids)} already downloaded, unavailable, or capped)'
     )
-
-    hf_token = os.environ.get('HF_TOKEN')
-    push_enabled = (not args.no_push) and HF_AVAILABLE and bool(hf_token) and bool(args.hf_repo_id)
-    if args.no_push:
-        logging.info('--no_push set: results will only be saved locally.')
-    elif not args.hf_repo_id:
-        logging.info('--hf_repo_id not set: results will only be saved locally.')
-    elif not HF_AVAILABLE:
-        logging.warning('huggingface_hub is not installed; results will only be saved locally. '
-                         'Run `pip install huggingface_hub` to enable pushes.')
-    elif not hf_token:
-        logging.warning('HF_TOKEN not set in the environment; results will only be saved locally.')
-
-    api = HfApi(token=hf_token) if push_enabled else None
-    if push_enabled:
-        try:
-            create_repo(args.hf_repo_id, repo_type='dataset', exist_ok=True, token=hf_token)
-        except Exception as exc:
-            logging.warning(f'create_repo({args.hf_repo_id}) failed (may already exist / no perms): {exc}')
 
     def checkpoint(df):
         df.to_csv(args.output_csv, index=False)
